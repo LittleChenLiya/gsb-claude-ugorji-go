@@ -377,6 +377,10 @@ var (
 
 	errHandleInited = errors.New("cannot modify initialized Handle")
 
+	// errExtTagConflict is returned when a tag is already bound to a different
+	// named type. A tag maps to at most one real type.
+	errExtTagConflict = errors.New("codec.Handle.SetExt: tag is already registered to a different type")
+
 	errNoFormatHandle = errors.New("no handle (cannot identify format)")
 )
 
@@ -1069,6 +1073,19 @@ func (x *basicHandleRuntimeState) setExt(rt reflect.Type, tag uint64, ext Ext) (
 		}
 	}
 
+	// A tag is bound to at most one real type. If the tag is already in use by
+	// a different named type, reject the registration without mutating anything
+	// (so no partial Handle state is left behind). Updating the ext for the same
+	// (type, tag) pair, or re-tagging the same type, remains allowed.
+	if ext != nil {
+		for i := range x.extHandle {
+			v := &x.extHandle[i]
+			if v.ext != nil && v.tag == tag && v.rtid != rtid {
+				return errExtTagConflict
+			}
+		}
+	}
+
 	for i := range x.extHandle {
 		v := &x.extHandle[i]
 		if v.rtid == rtid {
@@ -1398,6 +1415,9 @@ func (o extHandle) getExt(rtid uintptr, check bool) (v *extTypeTagFn) {
 	for i := range o {
 		v = &o[i]
 		if v.rtid == rtid || v.rtidptr == rtid {
+			if v.ext == nil { // deregistered
+				return nil
+			}
 			return
 		}
 	}
@@ -1408,6 +1428,9 @@ func (o extHandle) getExtForTag(tag uint64) (v *extTypeTagFn) {
 	for i := range o {
 		v = &o[i]
 		if v.tag == tag {
+			if v.ext == nil { // deregistered
+				return nil
+			}
 			return
 		}
 	}

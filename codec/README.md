@@ -205,6 +205,40 @@ Sample usage model:
     client := rpc.NewClientWithCodec(rpcCodec)
 ```
 
+# Extensions and immutable Handle snapshots
+
+A tag maps to exactly one named type. Registering a different type under a tag
+that is already in use returns an error and leaves the Handle untouched (no
+partial registration). Re-registering the same `(type, tag)` pair, or changing a
+type's tag, continues to work as before; `AddExt`, `SetExt`, `SetBytesExt` and
+`SetInterfaceExt` all share this rule.
+
+`codec.Snapshot(h)` returns an initialized, immutable copy of a Handle that
+captures its configuration and extension registrations at a point in time.
+Encoders and Decoders created from the snapshot are bound to that snapshot:
+adding or removing extensions on the original Handle afterwards never affects
+the snapshot, and bytes encoded from an old snapshot still decode back to the
+original type. Taking a snapshot does not initialize the original Handle, so it
+can still be configured via the original registration entry points.
+
+```go
+    type smallA uint8
+    type smallB uint8
+
+    var h codec.MsgpackHandle
+    h.SetBytesExt(reflect.TypeOf(smallA(0)), 5, smallAExt{})
+
+    snap := codec.Snapshot(&h) // snap can never be modified
+
+    // the live Handle keeps evolving; snap is unaffected
+    h.SetBytesExt(reflect.TypeOf(smallB(0)), 6, smallBExt{})
+
+    var b []byte
+    codec.NewEncoderBytes(&b, snap).Encode(smallA(7))
+    var a smallA
+    codec.NewDecoderBytes(b, snap).Decode(&a) // a == smallA(7)
+```
+
 # Running Tests
 
 To run tests, use the following:
