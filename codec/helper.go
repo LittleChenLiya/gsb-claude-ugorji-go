@@ -1092,6 +1092,19 @@ func (x *BasicHandle) typeInfos() *TypeInfos {
 	return defTypeInfos
 }
 
+// CheckStructFieldAmbiguity performs a precheck of the field mapping of the
+// type of v (which should be a struct or a pointer to one), reporting each
+// encoded field name which multiple fields at the same (shallowest) depth
+// map to, alongside the candidate field paths.
+//
+// It uses the TypeInfos configured on this handle (or the default one),
+// and never calls any Marshaler, Selfer or extension function.
+//
+// See TypeInfos.CheckStructFieldAmbiguity.
+func (x *BasicHandle) CheckStructFieldAmbiguity(v interface{}) []StructFieldAmbiguity {
+	return x.typeInfos().CheckStructFieldAmbiguity(reflect.TypeOf(v))
+}
+
 // getTypeInfo expects a non-pointer
 func (x *BasicHandle) getTypeInfo(rtid uintptr, rt reflect.Type) (pti *typeInfo) {
 	return x.typeInfos().get(rtid, rt)
@@ -1793,6 +1806,139 @@ func (p sfiSortedByEncName) Len() int           { return len(p) }
 func (p sfiSortedByEncName) Swap(i, j int)      { p[uint(i)], p[uint(j)] = p[uint(j)], p[uint(i)] }
 func (p sfiSortedByEncName) Less(i, j int) bool { return p[uint(i)].encName < p[uint(j)].encName }
 
+// StructFieldAmbiguity describes a single ambiguous field mapping in a struct:
+// multiple fields at the same (shallowest) depth - typically promoted from
+// same-level embedded fields - map to the same encoded name.
+//
+// During encoding, such ambiguity is implicitly resolved in favor of the
+// candidate seen first in declaration order. Strict mode
+// (EncodeOptions.CheckEmbeddedFieldAmbiguity) rejects such structs instead.
+type StructFieldAmbiguity struct {
+	// Name is the encoded field name that multiple fields map to.
+	//
+	// The name honors the configured struct tags i.e. an explicit tag
+	// takes precedence over the go field name, mirroring how the
+	// encoder computes the field name.
+	Name string
+
+	// Paths holds the candidate field paths, in declaration order.
+	//
+	// Each path is a dot-separated sequence of go field names, from the
+	// root struct down to the field e.g. "A.X" for field X promoted
+	// from the embedded field A.
+	Paths []string
+}
+
+// StructFieldAmbiguityError describes the ambiguous field mappings found
+// in a struct type.
+//
+// It is returned by Encode when EncodeOptions.CheckEmbeddedFieldAmbiguity
+// is set and a struct with ambiguous field mappings is about to be encoded.
+// Use errors.As to retrieve it from the error returned by Encode.
+type StructFieldAmbiguityError struct {
+	// Type is the struct type with ambiguous field mappings.
+	Type reflect.Type
+
+	// Conflicts holds each ambiguous encoded field name, alongside the
+	// candidate field paths it maps to.
+	Conflicts []StructFieldAmbiguity
+}
+
+func (e *StructFieldAmbiguityError) Error() string {
+	var b strings.Builder
+	b.WriteString("codec: ambiguous field mapping in struct ")
+	b.WriteString(e.Type.String())
+	for _, c := range e.Conflicts {
+		b.WriteString("\n    field name ")
+		b.WriteString(strconv.Quote(c.Name))
+		b.WriteString(" has ")
+		b.WriteString(strconv.Itoa(len(c.Paths)))
+		b.WriteString(" candidates at the same depth: ")
+		b.WriteString(strings.Join(c.Paths, ", "))
+	}
+	return b.String()
+}
+
+// sfiFindAmbiguities reports the encoded field names in sfis which have
+// multiple candidate fields at the same (shallowest) depth.
+//
+// It mirrors the resolution logic in (*typeInfo).resolve: the field at the
+// shallowest depth wins, and a tie at that depth is ambiguous (resolve keeps
+// the candidate seen first in declaration order).
+//
+// It must be called before (*typeInfo).resolve, which mutates sfis.
+func sfiFindAmbiguities(rt reflect.Type, sfis []structFieldInfo) (ambig []StructFieldAmbiguity) {
+	// group field indices by encoded name, preserving first-seen order.
+	// Structs typically have < 16 fields, so a linear scan of the names
+	// is faster than a map here.
+	var names []string
+	var groups [][]int
+	for i := range sfis {
+		encName := sfis[i].encName
+		j := len(names) - 1
+		for ; j >= 0; j-- {
+			if names[j] == encName {
+				break
+			}
+		}
+		if j < 0 {
+			names = append(names, encName)
+			groups = append(groups, []int{i})
+		} else {
+			groups[j] = append(groups[j], i)
+		}
+	}
+	for k, g := range groups {
+		if len(g) < 2 {
+			continue
+		}
+		// find the shallowest depth in the group
+		minDepth := len(sfis[g[0]].parents)
+		for _, i := range g[1:] {
+			if d := len(sfis[i].parents); d < minDepth {
+				minDepth = d
+			}
+		}
+		var paths []string
+		for _, i := range g {
+			if len(sfis[i].parents) == minDepth {
+				paths = append(paths, sfiFieldPath(rt, &sfis[i]))
+			}
+		}
+		if len(paths) > 1 {
+			ambig = append(ambig, StructFieldAmbiguity{Name: names[k], Paths: paths})
+		}
+	}
+	return
+}
+
+// sfiFieldPath returns the dot-separated path of go field names from the
+// root struct type down to the field described by sfi.
+func sfiFieldPath(root reflect.Type, sfi *structFieldInfo) (s string) {
+	var b strings.Builder
+	cur := root
+	for i, n := 0, len(sfi.parents); i <= n; i++ {
+		var index uint32
+		if i < n {
+			index = sfi.parents[i].index
+		} else {
+			index = sfi.node.index
+		}
+		f := cur.Field(int(index))
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(f.Name)
+		if i < n {
+			cur = f.Type
+			for cur.Kind() == reflect.Ptr {
+				cur = cur.Elem()
+			}
+		}
+	}
+	return b.String()
+}
+
 // typeInfo4Container holds information that is only available for
 // containers like map, array, chan, slice.
 type typeInfo4Container struct {
@@ -1896,6 +2042,11 @@ type typeInfo struct {
 
 	// MARKER - may need padding here (like 6 bytes - auto-handled)
 	sfi structFieldInfos
+
+	// sfiAmbig holds the ambiguous field mappings found in this (struct)
+	// type, or nil if none. It is computed purely from type metadata
+	// (no Marshaler/Selfer/extension function is ever called).
+	sfiAmbig []StructFieldAmbiguity
 }
 
 func (ti *typeInfo) siForEncName(name []byte) (si *structFieldInfo) {
@@ -2076,6 +2227,36 @@ func (x *TypeInfos) get(rtid uintptr, rt reflect.Type) (pti *typeInfo) {
 	return
 }
 
+// CheckStructFieldAmbiguity performs a precheck of the field mapping of a
+// struct type, reporting each encoded field name which multiple fields at
+// the same (shallowest) depth map to - typically fields promoted from
+// same-level embedded fields - alongside the candidate field paths.
+//
+// Pointer types are dereferenced first. It returns nil if rt is not a
+// struct type, or the struct type has no ambiguous field mapping.
+//
+// The resolution rules mirror the encoder exactly: an explicit struct tag
+// takes precedence over the go field name, the field at the shallowest
+// depth wins, and a tie at that depth is ambiguous.
+//
+// The check is purely reflection-based over type metadata: it never calls
+// any Marshaler, Selfer or extension function.
+func (x *TypeInfos) CheckStructFieldAmbiguity(rt reflect.Type) []StructFieldAmbiguity {
+	for rt != nil && rt.Kind() == reflect.Ptr {
+		rt = rt.Elem()
+	}
+	if rt == nil || rt.Kind() != reflect.Struct {
+		return nil
+	}
+	ti := x.get(rt2id(rt), rt)
+	if len(ti.sfiAmbig) == 0 {
+		return nil
+	}
+	ambig := make([]StructFieldAmbiguity, len(ti.sfiAmbig))
+	copy(ambig, ti.sfiAmbig)
+	return ambig
+}
+
 func (x *TypeInfos) find(rtid uintptr) (pti *typeInfo) {
 	sp := x.infos.Load()
 	if sp != nil {
@@ -2189,6 +2370,7 @@ func (x *TypeInfos) load(rt reflect.Type) (pti *typeInfo) {
 		}
 		pv.etypes = append(pv.etypes, ti.rtid)
 		x.rget(rt, nil, pv, omitEmpty)
+		ti.sfiAmbig = sfiFindAmbiguities(rt, pv.sfis)
 		n := ti.resolve(pv.sfis, pv.sfiNames)
 		ti.init(pv.sfis, n)
 		if usePoolForTypeInfoLoad {

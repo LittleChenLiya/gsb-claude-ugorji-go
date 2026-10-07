@@ -7,7 +7,6 @@ package codec
 
 import (
 	"encoding"
-
 	"io"
 	"math"
 	"math/big"
@@ -394,6 +393,9 @@ func (e *encoderCborBytes) kStructFieldKey(keyType valueType, encName string) {
 
 func (e *encoderCborBytes) kStructSimple(f *encFnInfo, rv reflect.Value) {
 	_ = e.e
+	if e.h.CheckEmbeddedFieldAmbiguity && f.ti.sfiAmbig != nil {
+		halt.onerror(&StructFieldAmbiguityError{Type: f.ti.rt, Conflicts: f.ti.sfiAmbig})
+	}
 	tisfi := f.ti.sfi.source()
 
 	chkCirRef := e.h.CheckCircularRef
@@ -444,6 +446,9 @@ func (e *encoderCborBytes) kStructSimple(f *encFnInfo, rv reflect.Value) {
 
 func (e *encoderCborBytes) kStruct(f *encFnInfo, rv reflect.Value) {
 	_ = e.e
+	if e.h.CheckEmbeddedFieldAmbiguity && f.ti.sfiAmbig != nil {
+		halt.onerror(&StructFieldAmbiguityError{Type: f.ti.rt, Conflicts: f.ti.sfiAmbig})
+	}
 	ti := f.ti
 	toMap := !(ti.toArray || e.h.StructToArray)
 	var mf map[string]interface{}
@@ -4386,6 +4391,9 @@ func (e *encoderCborIO) kStructFieldKey(keyType valueType, encName string) {
 
 func (e *encoderCborIO) kStructSimple(f *encFnInfo, rv reflect.Value) {
 	_ = e.e
+	if e.h.CheckEmbeddedFieldAmbiguity && f.ti.sfiAmbig != nil {
+		halt.onerror(&StructFieldAmbiguityError{Type: f.ti.rt, Conflicts: f.ti.sfiAmbig})
+	}
 	tisfi := f.ti.sfi.source()
 
 	chkCirRef := e.h.CheckCircularRef
@@ -4436,6 +4444,9 @@ func (e *encoderCborIO) kStructSimple(f *encFnInfo, rv reflect.Value) {
 
 func (e *encoderCborIO) kStruct(f *encFnInfo, rv reflect.Value) {
 	_ = e.e
+	if e.h.CheckEmbeddedFieldAmbiguity && f.ti.sfiAmbig != nil {
+		halt.onerror(&StructFieldAmbiguityError{Type: f.ti.rt, Conflicts: f.ti.sfiAmbig})
+	}
 	ti := f.ti
 	toMap := !(ti.toArray || e.h.StructToArray)
 	var mf map[string]interface{}

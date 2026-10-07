@@ -212,6 +212,26 @@ type EncodeOptions struct {
 	// This is opt-in, as there may be a performance hit to checking circular references.
 	CheckCircularRef bool
 
+	// CheckEmbeddedFieldAmbiguity controls whether we check for ambiguous
+	// struct field mappings and error fast during an encode (strict mode).
+	//
+	// A field mapping is ambiguous when multiple fields at the same
+	// (shallowest) depth - typically fields promoted from same-level
+	// embedded fields - map to the same encoded name. By default, such
+	// ambiguity is implicitly resolved in favor of the field seen first
+	// in declaration order.
+	//
+	// If enabled, an error (a *StructFieldAmbiguityError, retrievable via
+	// errors.As) is received before a struct with ambiguous field mappings
+	// is encoded.
+	//
+	// The check is purely reflection-based over type metadata: it never
+	// calls any Marshaler, Selfer or extension function.
+	//
+	// To check a type upfront without encoding, use
+	// TypeInfos.CheckStructFieldAmbiguity or BasicHandle.CheckStructFieldAmbiguity.
+	CheckEmbeddedFieldAmbiguity bool
+
 	// RecursiveEmptyCheck controls how we determine whether a value is empty.
 	//
 	// If true, we descend into interfaces and pointers to reursively check if value is empty.

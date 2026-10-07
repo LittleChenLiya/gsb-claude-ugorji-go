@@ -398,6 +398,9 @@ func (e *encoder[T]) kStructFieldKey(keyType valueType, encName string) {
 
 func (e *encoder[T]) kStructSimple(f *encFnInfo, rv reflect.Value) {
 	_ = e.e // early asserts e, e.e are not nil once
+	if e.h.CheckEmbeddedFieldAmbiguity && f.ti.sfiAmbig != nil {
+		halt.onerror(&StructFieldAmbiguityError{Type: f.ti.rt, Conflicts: f.ti.sfiAmbig})
+	}
 	tisfi := f.ti.sfi.source()
 
 	// To bypass encodeValue, we need to handle cases where
@@ -454,6 +457,9 @@ func (e *encoder[T]) kStructSimple(f *encFnInfo, rv reflect.Value) {
 
 func (e *encoder[T]) kStruct(f *encFnInfo, rv reflect.Value) {
 	_ = e.e // early asserts e, e.e are not nil once
+	if e.h.CheckEmbeddedFieldAmbiguity && f.ti.sfiAmbig != nil {
+		halt.onerror(&StructFieldAmbiguityError{Type: f.ti.rt, Conflicts: f.ti.sfiAmbig})
+	}
 	ti := f.ti
 	toMap := !(ti.toArray || e.h.StructToArray)
 	var mf map[string]interface{}
