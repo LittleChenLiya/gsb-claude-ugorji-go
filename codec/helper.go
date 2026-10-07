@@ -1069,6 +1069,18 @@ func (x *basicHandleRuntimeState) setExt(rt reflect.Type, tag uint64, ext Ext) (
 		}
 	}
 
+	// Reject a conflicting registration, where the tag is already bound
+	// to a different type. The check is done before any mutation, so a
+	// rejected registration leaves the registry unchanged (no partial state).
+	if ext != nil {
+		for i := range x.extHandle {
+			v := &x.extHandle[i]
+			if v.tag == tag && v.rtid != rtid {
+				return fmt.Errorf("codec.Handle.SetExt: tag %d already registered for type %v (cannot also register for type %v)", tag, v.rt, rt)
+			}
+		}
+	}
+
 	for i := range x.extHandle {
 		v := &x.extHandle[i]
 		if v.rtid == rtid {
