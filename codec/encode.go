@@ -1229,6 +1229,10 @@ RV:
 		fn = e.fn(rv.Type())
 	}
 
+	if e.h.StructFieldsStrict {
+		e.mustNotHaveStructConflict(&fn.i, rv)
+	}
+
 	if !fn.i.addrE { // typically, addrE = false, so check it first
 		// keep rv same
 	} else if rvpValid {

@@ -256,6 +256,12 @@ Every other field in a struct will be encoded/decoded.
 Embedded fields are encoded as if they exist in the top-level struct, with some
 caveats. See Encode documentation.
 
+Ambiguous field mappings (multiple fields at the same shallowest depth mapping
+to the same name) can be inspected statically, without encoding a value or
+invoking Marshal extensions, via `TypeInfos.StructFieldConflicts`. Setting
+`EncodeOptions.StructFieldsStrict` makes the encoder reject such types up-front
+with a `*StructFieldConflictError`, reporting the actual candidate paths.
+
 ## Exported Package API
 
 ```go
@@ -265,6 +271,11 @@ var MsgpackSpecRpc msgpackSpecRpc
 
 type TypeInfos struct{ ... }
     func NewTypeInfos(tags []string) *TypeInfos
+    func (*TypeInfos) StructFieldConflicts(t reflect.Type) []StructFieldConflict
+
+type StructFieldCandidate struct{ ... }
+type StructFieldConflict struct{ ... }
+type StructFieldConflictError struct{ ... }
 
 type Handle interface{ ... }
 type BasicHandle struct{ ... }

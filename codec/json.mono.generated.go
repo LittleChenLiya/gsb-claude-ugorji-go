@@ -1101,6 +1101,10 @@ RV:
 		fn = e.fn(rv.Type())
 	}
 
+	if e.h.StructFieldsStrict {
+		e.mustNotHaveStructConflict(&fn.i, rv)
+	}
+
 	if !fn.i.addrE {
 
 	} else if rvpValid {
@@ -5272,6 +5276,10 @@ RV:
 
 	if fn == nil {
 		fn = e.fn(rv.Type())
+	}
+
+	if e.h.StructFieldsStrict {
+		e.mustNotHaveStructConflict(&fn.i, rv)
 	}
 
 	if !fn.i.addrE {

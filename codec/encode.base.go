@@ -273,6 +273,23 @@ type EncodeOptions struct {
 	// in their natural zero-length formats e.g. a slice in json encoded as []
 	// (and not nil or {} if MapBySlice tag).
 	NilCollectionToZeroLength bool
+
+	// StructFieldsStrict controls whether ambiguously mapped struct fields
+	// cause an encode error before any value is written.
+	//
+	// An ambiguity arises when two or more fields at the same shallowest
+	// depth (e.g. two fields promoted in from different embedded structs)
+	// map to the same encoded name. Per the library's selector rules, the
+	// first of the tied fields (in declaration order) wins the name and
+	// the others are shadowed; fields with an explicit struct tag name
+	// follow the same resolution rules as untagged fields.
+	//
+	// When set, encoding a struct with an ambiguous field mapping fails
+	// up-front with a *StructFieldConflictError. The check is a pure
+	// reflection inspection: it runs before the value is encoded and
+	// never invokes Marshal extensions (Selfer, codec extensions,
+	// encoding.Text/Binary/JSON Marshaler, etc).
+	StructFieldsStrict bool
 }
 
 // ---------------------------------------------
@@ -319,6 +336,20 @@ type encoderBase struct {
 
 func (e *encoderBase) HandleName() string {
 	return e.hh.Name()
+}
+
+// mustNotHaveStructConflict enforces the strict embedded-field pre-check.
+//
+// It is a pure reflection inspection against the precomputed type info:
+// it runs before any byte is written and before a custom Marshal
+// extension is invoked, and never encodes a value itself.
+func (e *encoderBase) mustNotHaveStructConflict(fi *encFnInfo, rv reflect.Value) {
+	if rv.Kind() != reflect.Struct {
+		return
+	}
+	if cf := fi.ti.structConflicts; len(cf) != 0 {
+		halt.onerror(&StructFieldConflictError{Type: fi.ti.rt, Conflicts: cf})
+	}
 }
 
 // Release is a no-op.

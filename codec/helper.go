@@ -1514,6 +1514,11 @@ type structFieldInfo struct {
 	encNameEscape4Json bool
 	omitEmpty          bool
 
+	// explicitTag is true if the field's encoding name (encName)
+	// was explicitly set via a struct tag, instead of defaulting
+	// to the Go field name.
+	explicitTag bool
+
 	ptrKind bool
 
 	encBuiltin bool // is field supported for encoding as a builtin?
@@ -1894,6 +1899,11 @@ type typeInfo struct {
 
 	infoFieldOmitempty bool
 
+	// structConflicts holds the field mapping ambiguities found while
+	// resolving the (embedded) fields of a struct type.
+	// It is only populated for struct kinds.
+	structConflicts []StructFieldConflict
+
 	// MARKER - may need padding here (like 6 bytes - auto-handled)
 	sfi structFieldInfos
 }
@@ -2189,6 +2199,7 @@ func (x *TypeInfos) load(rt reflect.Type) (pti *typeInfo) {
 		}
 		pv.etypes = append(pv.etypes, ti.rtid)
 		x.rget(rt, nil, pv, omitEmpty)
+		ti.structConflicts = computeStructFieldConflicts(rt, pv.sfis)
 		n := ti.resolve(pv.sfis, pv.sfiNames)
 		ti.init(pv.sfis, n)
 		if usePoolForTypeInfoLoad {
@@ -2327,7 +2338,7 @@ LOOP:
 		}
 
 		var encName string
-		var parsed, omitEmpty bool
+		var parsed, omitEmpty, nameFromTag bool
 
 		ftid := rt2id(ft)
 		// if anonymous and no struct tag (or it's blank),
@@ -2348,6 +2359,7 @@ LOOP:
 			if !doInline {
 				encName, omitEmpty = parseStructFieldTag(stag)
 				parsed = true
+				nameFromTag = encName != ""
 				doInline = encName == "" // si.isZero()
 			}
 			if doInline && isStruct {
@@ -2394,6 +2406,7 @@ LOOP:
 		if !parsed {
 			encName, omitEmpty = parseStructFieldTag(stag)
 			parsed = true
+			nameFromTag = encName != ""
 		}
 		if encName == "" {
 			encName = f.Name
@@ -2403,11 +2416,12 @@ LOOP:
 		}
 
 		var si = structFieldInfo{
-			encName:   encName,
-			omitEmpty: omitEmpty,
-			ptrKind:   fkind == reflect.Ptr,
-			baseTyp:   ft,
-			ptrTyp:    reflect.PointerTo(ft),
+			encName:     encName,
+			explicitTag: nameFromTag,
+			omitEmpty:   omitEmpty,
+			ptrKind:     fkind == reflect.Ptr,
+			baseTyp:     ft,
+			ptrTyp:      reflect.PointerTo(ft),
 		}
 
 		// si.path = structFieldInfoPathNode{
